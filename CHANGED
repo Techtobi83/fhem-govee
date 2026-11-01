@@ -1,1 +1,2 @@
+2026-11-01  v1.0.1  98_GOVEE: Szenen laufen mit API-Key ueber die Cloud, LAN-Szenen sind nicht zuverlaessig; Attribut sceneRoute
 2026-11-01  v1.0.0  98_GOVEE: erste Version (LAN zuerst, App-Szenen je Modell, Cloud-Rueckfall, DIY-Szenen)

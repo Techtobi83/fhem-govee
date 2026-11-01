@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id: 98_GOVEE.pm v1.0.0 2026-11-01 $
+# $Id: 98_GOVEE.pm v1.0.1 2026-11-01 $
 #
 # 98_GOVEE.pm - Govee-Lampen direkt in FHEM, LAN zuerst
 #
@@ -8,16 +8,17 @@
 # einmal belegt werden kann.
 #
 # Wege, in dieser Reihenfolge:
-#   LAN    Schalten, Helligkeit, Farbe, Szenen und Status (UDP 4001-4003)
-#   Cloud  Govee Developer API, nur wenn die Lampe per LAN nicht antwortet,
-#          und fuer DIY-Szenen. Braucht einen API-Key.
+#   LAN    Schalten, Helligkeit, Farbe und Status (UDP 4001-4003)
+#   Cloud  Govee Developer API fuer Szenen und DIY-Szenen und fuer Lampen, die
+#          per LAN nicht antworten. Braucht einen API-Key. Ohne Key laufen
+#          Szenen per LAN, das nehmen nicht alle Lampen zuverlaessig an.
 #
 # Die Lampen melden Aenderungen nicht von sich aus, das LAN-Protokoll kennt
 # nur Anfrage und Antwort. Deshalb fragt die Bridge alle <lanInterval> Sekunden.
 #
 # Szenen stammen aus der Szenenbibliothek der Govee-App. Sie ist nicht
 # dokumentiert, aber ohne Anmeldung abrufbar. Eine Kopie je Modell liegt im
-# Log-Verzeichnis, damit Szenen auch ohne Internet funktionieren.
+# Log-Verzeichnis, damit die Auswahl auch ohne Internet vollstaendig bleibt.
 #
 # Autor:  TechTobi83
 # Dank:   Paketaufbau der Szenen nach govee2mqtt von Wez Furlong
@@ -44,7 +45,7 @@ use IO::Socket::INET;
 use MIME::Base64;
 use Socket qw(inet_aton pack_sockaddr_in sockaddr_in inet_ntoa SO_BROADCAST);
 
-my $GOVEE_version = '1.0.0';
+my $GOVEE_version = '1.0.1';
 
 my $GOVEE_mcast    = '239.255.255.250';
 my $GOVEE_portScan = 4001;
@@ -84,7 +85,7 @@ sub GOVEE_Initialize {
   $hash->{AttrFn}   = 'GOVEE_Attr';
   $hash->{ReadFn}   = 'GOVEE_Read';
   $hash->{AttrList} = 'disable:0,1 lanInterval scanInterval scanTargets sendGap cloudInterval '
-                    . 'lanIP sceneFilter ' . $readingFnAttributes;
+                    . 'lanIP sceneFilter sceneRoute:auto,lan ' . $readingFnAttributes;
   return;
 }
 
@@ -782,7 +783,17 @@ sub GOVEE_Scene {
   }
   my $scene = !$diyOnly && $lib ? $lib->{lookup}{$key} : undef;
 
-  if ($scene && $route eq 'lan') {
+  my $cloudName;
+  if (!$diyOnly) {
+    ($cloudName) = grep { lc($_) eq $key } keys %{ $hash->{helper}{cloudScenes} // {} };
+  }
+
+  # Das LAN-Szenenpaket ist nicht dokumentiert. Ein H61D5 kehrte danach zur letzten
+  # DIY-Szene zurueck, obwohl das Paket stimmte. Die Cloud trifft die Szene zuverlaessig.
+  my $preferCloud = defined($cloudName) && GOVEE_ApiKey()
+                  && AttrVal($hash->{NAME}, 'sceneRoute', 'auto') ne 'lan';
+
+  if ($scene && $route eq 'lan' && !$preferCloud) {
     GOVEE_EnsureOn($hash);
     GOVEE_LanQueue($hash, 'ptReal', { command => [ GOVEE_SceneFrames($scene->{code}, $scene->{param}) ] });
     GOVEE_Hold($hash, 'lan');
@@ -796,14 +807,11 @@ sub GOVEE_Scene {
     GOVEE_Apply($hash, { on => 1, effect => $want });
     return;
   }
-  if (!$diyOnly) {
-    for my $n (keys %{ $hash->{helper}{cloudScenes} // {} }) {
-      next if (lc($n) ne $key);
-      GOVEE_CloudControl($hash, 'devices.capabilities.dynamic_scene', 'lightScene', $hash->{helper}{cloudScenes}{$n});
-      GOVEE_Hold($hash, 'cloud');
-      GOVEE_Apply($hash, { on => 1, effect => $n });
-      return;
-    }
+  if (defined $cloudName) {
+    GOVEE_CloudControl($hash, 'devices.capabilities.dynamic_scene', 'lightScene', $hash->{helper}{cloudScenes}{$cloudName});
+    GOVEE_Hold($hash, 'cloud');
+    GOVEE_Apply($hash, { on => 1, effect => $cloudName });
+    return;
   }
   return "Szene '$want' gibt es fuer dieses Geraet nicht" . ($lib || $hash->{helper}{cloudScenes} ? '' : ' (Szenenliste noch nicht geladen)');
 }
@@ -1146,8 +1154,8 @@ sub GOVEE_CloudControl {
 
 =pod
 =item device
-=item summary Govee lamps via LAN with all app scenes, cloud only as fallback
-=item summary_DE Govee-Lampen per LAN mit allen App-Szenen, Cloud nur als Rueckfall
+=item summary Govee lamps: LAN control and status, all app scenes per model
+=item summary_DE Govee-Lampen: LAN-Steuerung und Status, alle App-Szenen je Modell
 
 =begin html
 
@@ -1155,13 +1163,14 @@ sub GOVEE_CloudControl {
 <h3>GOVEE</h3>
 <ul>
   Controls Govee lamps and LED strips directly from FHEM, without a bridge container and
-  without MQTT. The LAN interface is always preferred: switching, brightness, colour, colour
-  temperature, scenes and status all run locally. The Govee cloud is used only for lamps that
-  do not answer on the LAN, and for DIY scenes.<br><br>
+  without MQTT. Switching, brightness, colour, colour temperature and status run locally on the
+  LAN. With an API key, scenes and DIY scenes run through the Govee cloud, as does any lamp that
+  does not answer on the LAN. Without a key, scenes are sent on the LAN, which not every lamp
+  accepts reliably.<br><br>
 
   The list of scenes is loaded for each lamp model from the scene library of the Govee app, so
   the selection in FHEM shows the same scenes as the app. A copy is kept in the log directory,
-  which means scenes keep working without an internet connection.<br><br>
+  so the selection stays complete without an internet connection.<br><br>
 
   <b>Status updates</b>: Govee lamps do not report changes by themselves on the LAN. The bridge
   therefore asks them every <code>lanInterval</code> seconds. A change made in the Govee app
@@ -1174,7 +1183,7 @@ sub GOVEE_CloudControl {
     <li>FHEM in the same network as the lamps. Inside Docker this requires host networking.</li>
     <li>UDP port 4002 free on the FHEM host. Only one program per host can use the Govee LAN
         interface.</li>
-    <li>Optional: a Govee API key, needed for the cloud fallback and DIY scenes. In the Govee
+    <li>Recommended: a Govee API key, used for scenes, DIY scenes and the cloud fallback. In the Govee
         Home app: profile, settings (gear icon), "Apply for API Key".</li>
     <li>Perl module JSON (Debian: <code>libjson-perl</code>).</li>
   </ul>
@@ -1281,6 +1290,10 @@ set Lamp effect Sunrise</pre>
         Regular expression that limits the selection list, checked against
         <code>category:name</code>. Example: <code>^(Natural|Life):</code>. Scenes outside the
         list can still be started by name.</li>
+    <a id="GOVEE-attr-sceneRoute"></a>
+    <li><code>sceneRoute</code> (lamp) auto|lan<br>
+        auto sends scenes through the cloud when a key is stored and the cloud knows the scene,
+        otherwise on the LAN. lan always uses the LAN. Default auto.</li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
   <br>
@@ -1323,6 +1336,9 @@ set Lamp effect Sunrise</pre>
         this host, for example a govee2mqtt container with host networking.</li>
     <li>Scene does not start, but no error: not all models support all scenes on the LAN. Set
         verbose 5 on the bridge to see what is sent.</li>
+    <li>A scene sent over the LAN turns the lamp off briefly and the last DIY scene comes back:
+        the LAN scene packet is undocumented and not every lamp accepts it reliably. Store an API
+        key, scenes then run through the cloud. <code>sceneRoute</code> must stay on auto.</li>
   </ul>
 </ul>
 
@@ -1334,13 +1350,13 @@ set Lamp effect Sunrise</pre>
 <h3>GOVEE</h3>
 <ul>
   Steuert Govee-Lampen und LED-Streifen direkt aus FHEM, ohne Bridge-Container und ohne MQTT.
-  Die LAN-Schnittstelle hat immer Vorrang: Schalten, Helligkeit, Farbe, Farbtemperatur, Szenen
-  und Status laufen lokal. Die Govee-Cloud wird nur für Lampen genutzt, die im LAN nicht
-  antworten, und für DIY-Szenen.<br><br>
+  Schalten, Helligkeit, Farbe, Farbtemperatur und Status laufen lokal im LAN. Mit API-Key laufen
+  Szenen und DIY-Szenen über die Govee-Cloud, ebenso jede Lampe, die im LAN nicht antwortet. Ohne
+  Key gehen Szenen per LAN raus, das nimmt nicht jede Lampe zuverlässig an.<br><br>
 
   Die Szenenliste wird je Lampenmodell aus der Szenenbibliothek der Govee-App geladen. Die
   Auswahl in FHEM zeigt also dieselben Szenen wie die App. Eine Kopie liegt im Log-Verzeichnis,
-  dadurch funktionieren Szenen auch ohne Internet.<br><br>
+  dadurch bleibt die Auswahl auch ohne Internet vollständig.<br><br>
 
   <b>Statusmeldungen</b>: Govee-Lampen melden Änderungen im LAN nicht von sich aus. Die Bridge
   fragt sie deshalb alle <code>lanInterval</code> Sekunden ab. Eine Änderung in der Govee-App
@@ -1353,7 +1369,7 @@ set Lamp effect Sunrise</pre>
     <li>FHEM im selben Netz wie die Lampen. In Docker ist dafür Host-Netzwerk nötig.</li>
     <li>UDP-Port 4002 auf dem FHEM-Rechner frei. Die Govee-LAN-Schnittstelle kann je Rechner nur
         ein Programm nutzen.</li>
-    <li>Optional ein Govee-API-Key für den Cloud-Rückfall und DIY-Szenen. In der Govee-Home-App:
+    <li>Empfohlen: ein Govee-API-Key für Szenen, DIY-Szenen und den Cloud-Rückfall. In der Govee-Home-App:
         Profil, Einstellungen (Zahnrad), „Apply for API Key“.</li>
     <li>Perl-Modul JSON (Debian: <code>libjson-perl</code>).</li>
   </ul>
@@ -1462,6 +1478,10 @@ set Lampe effect Sunrise</pre>
         Regulärer Ausdruck, der die Auswahlliste begrenzt, geprüft gegen
         <code>Kategorie:Name</code>. Beispiel: <code>^(Natural|Life):</code>. Szenen außerhalb
         der Liste lassen sich weiter über den Namen starten.</li>
+    <a id="GOVEE-attr-sceneRoute"></a>
+    <li><code>sceneRoute</code> (Lampe) auto|lan<br>
+        auto schickt Szenen über die Cloud, wenn ein Schlüssel gespeichert ist und die Cloud die
+        Szene kennt, sonst per LAN. lan nimmt immer das LAN. Vorgabe auto.</li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
   <br>
@@ -1504,6 +1524,10 @@ set Lampe effect Sunrise</pre>
         Govee-LAN-Schnittstelle, zum Beispiel ein govee2mqtt-Container mit Host-Netzwerk.</li>
     <li>Eine Szene startet nicht, aber es kommt kein Fehler: Nicht jedes Modell kann jede Szene
         im LAN. Setze verbose 5 an der Bridge, um zu sehen, was gesendet wird.</li>
+    <li>Eine per LAN gesendete Szene lässt die Lampe kurz ausgehen und die letzte DIY-Szene kommt
+        zurück: Das LAN-Szenenpaket ist nicht dokumentiert, und nicht jede Lampe nimmt es zuverlässig
+        an. Hinterlege einen API-Key, dann laufen Szenen über die Cloud. <code>sceneRoute</code>
+        muss dafür auf auto stehen.</li>
   </ul>
 </ul>
 
