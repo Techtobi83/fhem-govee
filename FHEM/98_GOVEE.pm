@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id: 98_GOVEE.pm v1.0.2 2026-11-01 $
+# $Id: 98_GOVEE.pm v1.0.3 2026-11-01 $
 #
 # 98_GOVEE.pm - Govee-Lampen direkt in FHEM, LAN zuerst
 #
@@ -45,7 +45,7 @@ use IO::Socket::INET;
 use MIME::Base64;
 use Socket qw(inet_aton pack_sockaddr_in sockaddr_in inet_ntoa SO_BROADCAST);
 
-my $GOVEE_version = '1.0.2';
+my $GOVEE_version = '1.0.3';
 
 my $GOVEE_mcast    = '239.255.255.250';
 my $GOVEE_portScan = 4001;
@@ -967,18 +967,30 @@ sub GOVEE_LibDone {
     return;
   }
   my $ts = gettimeofday();
-  GOVEE_LibStore($sku, \@scenes, $ts);
   my $err2 = FileWrite({ FileName => GOVEE_LibFile($sku), ForceType => 'file' },
-                       JSON->new->utf8(0)->canonical->encode({ ts => int($ts), scenes => \@scenes }));
+                       JSON->new->ascii->canonical->encode({ ts => int($ts), scenes => \@scenes }));
   Log3($name, 3, "$name: Szenenkopie $sku nicht gespeichert: $err2") if ($err2);
+  GOVEE_LibStore($sku, \@scenes, $ts);
   readingsSingleUpdate($bridge, 'sceneError', 'none', 0);
   Log3($name, 4, "$name: $sku hat " . scalar(@scenes) . ' Szenen');
   return;
 }
 
+# Govee trennt manche Namen mit geschuetztem Leerzeichen. Readings muessen UTF-8-Bytes
+# sein, sonst verwirft FTUI die ganze Liste.
+sub GOVEE_CleanName {
+  my ($name) = @_;
+  $name =~ s/\x{a0}/ /g;
+  utf8::encode($name);
+  return $name;
+}
+
 sub GOVEE_LibStore {
   my ($sku, $scenes, $ts) = @_;
   return if (ref($scenes) ne 'ARRAY');
+  for my $scene (@$scenes) {
+    $scene->{$_} = GOVEE_CleanName($scene->{$_}) for (qw(name cat));
+  }
   my %lookup = map { lc($_->{name}) => $_ } @$scenes;
   $modules{GOVEE}{lib}{$sku} = { scenes => $scenes, lookup => \%lookup, ts => $ts // 0 };
   GOVEE_ClearSetlists($sku);
@@ -1054,7 +1066,7 @@ sub GOVEE_CloudDevicesDone {
     next if (!$lamp);
     readingsBeginUpdate($lamp);
     readingsBulkUpdateIfChanged($lamp, 'sku', $dev->{sku}) if ($dev->{sku});
-    readingsBulkUpdateIfChanged($lamp, 'deviceName', $dev->{deviceName}) if ($dev->{deviceName});
+    readingsBulkUpdateIfChanged($lamp, 'deviceName', GOVEE_CleanName($dev->{deviceName})) if ($dev->{deviceName});
     readingsEndUpdate($lamp, 0);
     GOVEE_ClearSetlists($dev->{sku});
     GOVEE_CloudScenes($bridge, $lamp);
@@ -1088,8 +1100,9 @@ sub GOVEE_CloudOptions {
     for my $opt (ref($opts) eq 'ARRAY' ? @$opts : ()) {
       next if (!defined $opt->{name} || $opt->{name} eq '');
       # Die App erlaubt gleiche Namen, zum Beispiel zweimal "Neuer Effekt"
-      my ($label, $n) = ($opt->{name}, 1);
-      $label = "$opt->{name} " . ++$n while (exists $options{$label});
+      my $base = GOVEE_CleanName($opt->{name});
+      my ($label, $n) = ($base, 1);
+      $label = "$base " . ++$n while (exists $options{$label});
       $options{$label} = $opt->{value};
     }
   }
