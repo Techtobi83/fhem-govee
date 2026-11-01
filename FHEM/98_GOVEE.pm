@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id: 98_GOVEE.pm v1.0.1 2026-11-01 $
+# $Id: 98_GOVEE.pm v1.0.2 2026-11-01 $
 #
 # 98_GOVEE.pm - Govee-Lampen direkt in FHEM, LAN zuerst
 #
@@ -45,7 +45,7 @@ use IO::Socket::INET;
 use MIME::Base64;
 use Socket qw(inet_aton pack_sockaddr_in sockaddr_in inet_ntoa SO_BROADCAST);
 
-my $GOVEE_version = '1.0.1';
+my $GOVEE_version = '1.0.2';
 
 my $GOVEE_mcast    = '239.255.255.250';
 my $GOVEE_portScan = 4001;
@@ -544,7 +544,14 @@ sub GOVEE_Set {
     return GOVEE_Brightness($hash, $val);
   }
   if ($cmd eq 'rgb') {
-    (my $val = $args[0] // '') =~ s/^#//;
+    return 'Syntax: set <name> rgb <RRGGBB>' if (!@args);
+    # Automatiken reichen gesicherte Werte oft verpackt oder leer durch, zum Beispiel
+    # [FFDD80 replace('#','')]. Ein Fehler wuerde ihre restlichen Befehle abbrechen.
+    (my $val = $args[0]) =~ s/[^0-9A-Fa-f]//g;
+    if ($val eq '') {
+      Log3($name, 3, "$name: rgb ohne Farbwert ignoriert: $args[0]");
+      return;
+    }
     return 'Syntax: set <name> rgb <RRGGBB>' if ($val !~ /^[0-9A-Fa-f]{6}$/);
     return GOVEE_Rgb($hash, $val);
   }
