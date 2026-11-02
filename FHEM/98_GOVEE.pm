@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id: 98_GOVEE.pm v1.0.5 2026-11-02 $
+# $Id: 98_GOVEE.pm v1.0.6 2026-11-02 $
 #
 # 98_GOVEE.pm - Govee-Lampen direkt in FHEM, LAN zuerst
 #
@@ -45,7 +45,7 @@ use IO::Socket::INET;
 use MIME::Base64;
 use Socket qw(inet_aton pack_sockaddr_in sockaddr_in inet_ntoa SO_BROADCAST);
 
-my $GOVEE_version = '1.0.5';
+my $GOVEE_version = '1.0.6';
 
 my $GOVEE_mcast    = '239.255.255.250';
 my $GOVEE_portScan = 4001;
@@ -1299,7 +1299,8 @@ set Lamp effect Sunrise</pre>
         Starts a scene. The selection contains the scenes of this lamp model, followed by your
         DIY scenes. In commands, write spaces as <code>#</code> or as spaces. A name that exists
         in several categories gets the category appended, for example
-        <code>Rainbow (Shape)</code>. An unknown name returns an error message.</li>
+        <code>Rainbow (Shape)</code>. An unknown name returns an error message. The list does not show
+        which scenes run through the cloud, the reading <code>sceneListCloud</code> names them.</li>
     <a id="GOVEE-set-effect_custom"></a>
     <li><code>effect_custom &lt;scene&gt;</code><br>
         The same as <code>effect</code> with free text input.</li>
@@ -1491,7 +1492,8 @@ set Lampe effect Sunrise</pre>
         Startet eine Szene. Die Auswahl enthält die Szenen dieses Lampenmodells, danach deine
         DIY-Szenen. In Befehlen schreibst du Leerzeichen als <code>#</code> oder als Leerzeichen.
         Kommt ein Name in mehreren Kategorien vor, steht die Kategorie dahinter, zum Beispiel
-        <code>Rainbow (Shape)</code>. Bei einem unbekannten Namen kommt eine Fehlermeldung.</li>
+        <code>Rainbow (Shape)</code>. Bei einem unbekannten Namen kommt eine Fehlermeldung. Welche Szenen
+        über die Cloud laufen, zeigt die Auswahl nicht, das Reading <code>sceneListCloud</code> nennt sie.</li>
     <a id="GOVEE-set-effect_custom"></a>
     <li><code>effect_custom &lt;Szene&gt;</code><br>
         Wie <code>effect</code>, aber mit freier Texteingabe.</li>
