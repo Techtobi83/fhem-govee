@@ -13,7 +13,7 @@ jeweiligen Lampenmodell.
 - Cloud als Rückfall für Lampen, die im LAN nicht antworten
 - Automatische Suche, geänderte IP-Adressen werden von selbst übernommen
 - Events nur bei echten Änderungen, die Abfragen belasten das Event-Log nicht
-- Szenenkopie im Log-Verzeichnis, damit Szenen auch ohne Internet laufen
+- Szenenkopie im Log-Verzeichnis, damit die Auswahl auch ohne Internet vollständig bleibt
 - API-Key verschleiert im FHEM-Schlüsselspeicher, nicht in der `fhem.cfg`
 - Ausführliche FHEM-Hilfe auf Deutsch und Englisch (`help GOVEE`)
 
