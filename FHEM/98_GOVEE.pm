@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id: 98_GOVEE.pm v1.0.4 2026-11-02 $
+# $Id: 98_GOVEE.pm v1.0.5 2026-11-02 $
 #
 # 98_GOVEE.pm - Govee-Lampen direkt in FHEM, LAN zuerst
 #
@@ -45,7 +45,7 @@ use IO::Socket::INET;
 use MIME::Base64;
 use Socket qw(inet_aton pack_sockaddr_in sockaddr_in inet_ntoa SO_BROADCAST);
 
-my $GOVEE_version = '1.0.4';
+my $GOVEE_version = '1.0.5';
 
 my $GOVEE_mcast    = '239.255.255.250';
 my $GOVEE_portScan = 4001;
@@ -641,11 +641,40 @@ sub GOVEE_SceneNames {
 # Fuer Oberflaechen wie FTUI, die eine Auswahl aus einem Reading fuellen
 sub GOVEE_UpdateSceneList {
   my ($hash) = @_;
+  my $name = $hash->{NAME};
   my ($names, $diy) = GOVEE_SceneNames($hash);
-  my $value = join(',', map { (my $n = $_) =~ s/,/ /g; $n } @$names, @$diy);
-  return if ($value eq '' || $value eq ReadingsVal($hash->{NAME}, 'sceneList', ''));
-  readingsSingleUpdate($hash, 'sceneList', $value, 1);
+  my $plain = sub { return map { (my $n = $_) =~ s/,/ /g; $n } @_ };
+  my $value = join(',', $plain->(@$names, @$diy));
+  return if ($value eq '');
+
+  # Welche davon ueber die Cloud gehen, damit eine Oberflaeche sie kennzeichnen kann
+  my $sku  = GOVEE_Sku($hash);
+  my $lib  = $sku ? $modules{GOVEE}{lib}{$sku} : undef;
+  my $key  = GOVEE_ApiKey();
+  my @viaCloud = grep {
+    my $scene = $lib ? $lib->{lookup}{ lc($_) } : undef;
+    $scene ? GOVEE_SceneViaCloud($hash, $scene) : $key;
+  } @$names;
+  push @viaCloud, @$diy if ($key);
+  my $cloud = join(',', $plain->(@viaCloud));
+
+  readingsBeginUpdate($hash);
+  readingsBulkUpdate($hash, 'sceneList', $value) if ($value ne ReadingsVal($name, 'sceneList', ''));
+  readingsBulkUpdate($hash, 'sceneListCloud', $cloud) if ($cloud ne ReadingsVal($name, 'sceneListCloud', "\0"));
+  readingsEndUpdate($hash, 1);
   return;
+}
+
+# Gleiche Entscheidung wie beim Senden: Typ 5 ueber die Cloud, sofern Schluessel und
+# Cloud-Eintrag vorhanden sind; sceneRoute lan oder cloud legt den Weg fest
+sub GOVEE_SceneViaCloud {
+  my ($hash, $scene) = @_;
+  my $mode = AttrVal($hash->{NAME}, 'sceneRoute', 'auto');
+  return 0 if ($mode eq 'lan' || !GOVEE_ApiKey());
+  my $key = lc($scene->{name});
+  return 0 if (!grep { lc($_) eq $key } keys %{ $hash->{helper}{cloudScenes} // {} });
+  return 1 if ($mode eq 'cloud' || !defined($scene->{type}) || $scene->{type} == 5);
+  return 0;
 }
 
 sub GOVEE_Setlist {
@@ -798,9 +827,9 @@ sub GOVEE_Scene {
   # Das LAN-Paket ist nur fuer Szenen vom Typ 0 und 2 entschluesselt. Typ 5 kodiert
   # die Parameter anders, ein H61D5 kehrte danach zur letzten DIY-Szene zurueck.
   # Ohne gespeicherten Typ (alte Szenenkopie) ist die Cloud der sichere Weg.
-  my $mode = AttrVal($hash->{NAME}, 'sceneRoute', 'auto');
-  my $preferCloud = defined($cloudName) && GOVEE_ApiKey() && $mode ne 'lan'
-                  && ($mode eq 'cloud' || !$scene || !defined($scene->{type}) || $scene->{type} == 5);
+  my $preferCloud = defined($cloudName)
+                  && ($scene ? GOVEE_SceneViaCloud($hash, $scene)
+                             : GOVEE_ApiKey() && AttrVal($hash->{NAME}, 'sceneRoute', 'auto') ne 'lan');
 
   if ($scene && $route eq 'lan' && !$preferCloud) {
     GOVEE_EnsureOn($hash);
@@ -1340,6 +1369,8 @@ set Lamp effect Sunrise</pre>
         <code>bleVersion</code>, <code>scenes</code> (number of scenes)</li>
     <li><code>sceneList</code>: the selectable scenes, separated by commas, for example to fill a
         selection list in FTUI. It follows <code>sceneFilter</code>.</li>
+    <li><code>sceneListCloud</code>: those scenes from <code>sceneList</code> that are sent through
+        the cloud, so a user interface can mark them. Empty when all run on the LAN.</li>
   </ul>
   <br>
 
@@ -1531,6 +1562,8 @@ set Lampe effect Sunrise</pre>
         <code>bleVersion</code>, <code>scenes</code> (Anzahl der Szenen)</li>
     <li><code>sceneList</code>: die wählbaren Szenen, durch Kommas getrennt, zum Beispiel für eine
         Auswahlliste in FTUI. Sie folgt <code>sceneFilter</code>.</li>
+    <li><code>sceneListCloud</code>: die Szenen aus <code>sceneList</code>, die über die Cloud
+        gesendet werden, damit eine Oberfläche sie kennzeichnen kann. Leer, wenn alle per LAN laufen.</li>
   </ul>
   <br>
 

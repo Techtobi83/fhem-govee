@@ -82,7 +82,8 @@ Das Reading `sceneList` enthält die wählbaren Szenen und füllt direkt eine Au
   (value)="set Lampe effect $value"></ftui-dropdown>
 ```
 
-Mit dem Attribut `sceneFilter` kürzt du lange Listen, `^(?!Shape:)` blendet zum Beispiel die Kategorie Shape aus.
+Das Reading `sceneListCloud` nennt die Szenen daraus, die über die Cloud laufen, zum Beispiel für eine
+Markierung in der Auswahl. Mit dem Attribut `sceneFilter` kürzt du lange Listen, `^(?!Shape:)` blendet zum Beispiel die Kategorie Shape aus.
 
 Alle Befehle, Attribute und Readings stehen in `help GOVEE`.
 
