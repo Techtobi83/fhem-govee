@@ -1,3 +1,4 @@
+2026-11-02  v1.0.4  98_GOVEE: Szenen vom Typ 0 und 2 per LAN, nur Typ 5 ueber die Cloud; sceneRoute cloud
 2026-11-01  v1.0.3  98_GOVEE: Szenennamen als gueltiges UTF-8, die Liste von Lampen wie H705D blieb in FTUI sonst leer
 2026-11-01  v1.0.2  98_GOVEE: rgb nimmt verpackte Farbwerte aus Automatiken an und bricht sie bei leerem Wert nicht ab
 2026-11-01  v1.0.1  98_GOVEE: Szenen laufen mit API-Key ueber die Cloud, LAN-Szenen sind nicht zuverlaessig; Attribut sceneRoute

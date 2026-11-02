@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id: 98_GOVEE.pm v1.0.3 2026-11-01 $
+# $Id: 98_GOVEE.pm v1.0.4 2026-11-02 $
 #
 # 98_GOVEE.pm - Govee-Lampen direkt in FHEM, LAN zuerst
 #
@@ -8,10 +8,10 @@
 # einmal belegt werden kann.
 #
 # Wege, in dieser Reihenfolge:
-#   LAN    Schalten, Helligkeit, Farbe und Status (UDP 4001-4003)
-#   Cloud  Govee Developer API fuer Szenen und DIY-Szenen und fuer Lampen, die
-#          per LAN nicht antworten. Braucht einen API-Key. Ohne Key laufen
-#          Szenen per LAN, das nehmen nicht alle Lampen zuverlaessig an.
+#   LAN    Schalten, Helligkeit, Farbe, Status und Szenen der Typen 0 und 2
+#          (UDP 4001-4003)
+#   Cloud  Govee Developer API fuer Szenen vom Typ 5, fuer DIY-Szenen und fuer
+#          Lampen, die per LAN nicht antworten. Braucht einen API-Key.
 #
 # Die Lampen melden Aenderungen nicht von sich aus, das LAN-Protokoll kennt
 # nur Anfrage und Antwort. Deshalb fragt die Bridge alle <lanInterval> Sekunden.
@@ -45,7 +45,7 @@ use IO::Socket::INET;
 use MIME::Base64;
 use Socket qw(inet_aton pack_sockaddr_in sockaddr_in inet_ntoa SO_BROADCAST);
 
-my $GOVEE_version = '1.0.3';
+my $GOVEE_version = '1.0.4';
 
 my $GOVEE_mcast    = '239.255.255.250';
 my $GOVEE_portScan = 4001;
@@ -85,7 +85,7 @@ sub GOVEE_Initialize {
   $hash->{AttrFn}   = 'GOVEE_Attr';
   $hash->{ReadFn}   = 'GOVEE_Read';
   $hash->{AttrList} = 'disable:0,1 lanInterval scanInterval scanTargets sendGap cloudInterval '
-                    . 'lanIP sceneFilter sceneRoute:auto,lan ' . $readingFnAttributes;
+                    . 'lanIP sceneFilter sceneRoute:auto,lan,cloud ' . $readingFnAttributes;
   return;
 }
 
@@ -795,10 +795,12 @@ sub GOVEE_Scene {
     ($cloudName) = grep { lc($_) eq $key } keys %{ $hash->{helper}{cloudScenes} // {} };
   }
 
-  # Das LAN-Szenenpaket ist nicht dokumentiert. Ein H61D5 kehrte danach zur letzten
-  # DIY-Szene zurueck, obwohl das Paket stimmte. Die Cloud trifft die Szene zuverlaessig.
-  my $preferCloud = defined($cloudName) && GOVEE_ApiKey()
-                  && AttrVal($hash->{NAME}, 'sceneRoute', 'auto') ne 'lan';
+  # Das LAN-Paket ist nur fuer Szenen vom Typ 0 und 2 entschluesselt. Typ 5 kodiert
+  # die Parameter anders, ein H61D5 kehrte danach zur letzten DIY-Szene zurueck.
+  # Ohne gespeicherten Typ (alte Szenenkopie) ist die Cloud der sichere Weg.
+  my $mode = AttrVal($hash->{NAME}, 'sceneRoute', 'auto');
+  my $preferCloud = defined($cloudName) && GOVEE_ApiKey() && $mode ne 'lan'
+                  && ($mode eq 'cloud' || !$scene || !defined($scene->{type}) || $scene->{type} == 5);
 
   if ($scene && $route eq 'lan' && !$preferCloud) {
     GOVEE_EnsureOn($hash);
@@ -959,7 +961,8 @@ sub GOVEE_LibDone {
         $unique = "$label ($cat->{categoryName} " . $n++ . ')' while ($seen{ lc($unique) });
       }
       $seen{ lc($unique) } = 1;
-      push @scenes, { name => $unique, cat => $cat->{categoryName} // '', code => int($fx->{sceneCode}), param => $fx->{scenceParam} // '' };
+      push @scenes, { name => $unique, cat => $cat->{categoryName} // '', code => int($fx->{sceneCode}),
+                        param => $fx->{scenceParam} // '', type => int($fx->{sceneType} // 0) };
     }
   }
   if (!@scenes) {
@@ -992,6 +995,8 @@ sub GOVEE_LibStore {
     $scene->{$_} = GOVEE_CleanName($scene->{$_}) for (qw(name cat));
   }
   my %lookup = map { lc($_->{name}) => $_ } @$scenes;
+  # Kopien von vor 1.0.4 kennen den Szenentyp nicht, sie werden beim naechsten Takt neu geladen
+  $ts = 0 if (@$scenes && !defined($scenes->[0]{type}));
   $modules{GOVEE}{lib}{$sku} = { scenes => $scenes, lookup => \%lookup, ts => $ts // 0 };
   GOVEE_ClearSetlists($sku);
   for my $lamp (values %{ $modules{GOVEE}{defptr} // {} }) {
@@ -1184,9 +1189,9 @@ sub GOVEE_CloudControl {
 <ul>
   Controls Govee lamps and LED strips directly from FHEM, without a bridge container and
   without MQTT. Switching, brightness, colour, colour temperature and status run locally on the
-  LAN. With an API key, scenes and DIY scenes run through the Govee cloud, as does any lamp that
-  does not answer on the LAN. Without a key, scenes are sent on the LAN, which not every lamp
-  accepts reliably.<br><br>
+  LAN, and so do most scenes. Govee marks every scene with a type: types 0 and 2 run on the LAN,
+  type 5 is not decoded yet and runs through the Govee cloud when an API key is stored. DIY scenes
+  and lamps that do not answer on the LAN also use the cloud.<br><br>
 
   The list of scenes is loaded for each lamp model from the scene library of the Govee app, so
   the selection in FHEM shows the same scenes as the app. A copy is kept in the log directory,
@@ -1311,9 +1316,10 @@ set Lamp effect Sunrise</pre>
         <code>category:name</code>. Example: <code>^(Natural|Life):</code>. Scenes outside the
         list can still be started by name.</li>
     <a id="GOVEE-attr-sceneRoute"></a>
-    <li><code>sceneRoute</code> (lamp) auto|lan<br>
-        auto sends scenes through the cloud when a key is stored and the cloud knows the scene,
-        otherwise on the LAN. lan always uses the LAN. Default auto.</li>
+    <li><code>sceneRoute</code> (lamp) auto|lan|cloud<br>
+        auto sends scenes of type 0 and 2 on the LAN and type 5 through the cloud, if a key is
+        stored and the cloud knows the scene. lan always uses the LAN, cloud always the cloud.
+        Default auto.</li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
   <br>
@@ -1357,8 +1363,9 @@ set Lamp effect Sunrise</pre>
     <li>Scene does not start, but no error: not all models support all scenes on the LAN. Set
         verbose 5 on the bridge to see what is sent.</li>
     <li>A scene sent over the LAN turns the lamp off briefly and the last DIY scene comes back:
-        the LAN scene packet is undocumented and not every lamp accepts it reliably. Store an API
-        key, scenes then run through the cloud. <code>sceneRoute</code> must stay on auto.</li>
+        this happens with scenes of type 5, whose LAN packet is not decoded. Store an API key, these
+        scenes then run through the cloud. If a lamp also rejects other scenes on the LAN, set
+        <code>sceneRoute</code> to cloud.</li>
   </ul>
 </ul>
 
@@ -1370,9 +1377,10 @@ set Lamp effect Sunrise</pre>
 <h3>GOVEE</h3>
 <ul>
   Steuert Govee-Lampen und LED-Streifen direkt aus FHEM, ohne Bridge-Container und ohne MQTT.
-  Schalten, Helligkeit, Farbe, Farbtemperatur und Status laufen lokal im LAN. Mit API-Key laufen
-  Szenen und DIY-Szenen über die Govee-Cloud, ebenso jede Lampe, die im LAN nicht antwortet. Ohne
-  Key gehen Szenen per LAN raus, das nimmt nicht jede Lampe zuverlässig an.<br><br>
+  Schalten, Helligkeit, Farbe, Farbtemperatur und Status laufen lokal im LAN, ebenso die meisten
+  Szenen. Govee kennzeichnet jede Szene mit einem Typ: Typ 0 und 2 laufen per LAN, Typ 5 ist noch
+  nicht entschlüsselt und läuft mit API-Key über die Govee-Cloud. Auch DIY-Szenen und Lampen, die
+  im LAN nicht antworten, nutzen die Cloud.<br><br>
 
   Die Szenenliste wird je Lampenmodell aus der Szenenbibliothek der Govee-App geladen. Die
   Auswahl in FHEM zeigt also dieselben Szenen wie die App. Eine Kopie liegt im Log-Verzeichnis,
@@ -1499,9 +1507,10 @@ set Lampe effect Sunrise</pre>
         <code>Kategorie:Name</code>. Beispiel: <code>^(Natural|Life):</code>. Szenen außerhalb
         der Liste lassen sich weiter über den Namen starten.</li>
     <a id="GOVEE-attr-sceneRoute"></a>
-    <li><code>sceneRoute</code> (Lampe) auto|lan<br>
-        auto schickt Szenen über die Cloud, wenn ein Schlüssel gespeichert ist und die Cloud die
-        Szene kennt, sonst per LAN. lan nimmt immer das LAN. Vorgabe auto.</li>
+    <li><code>sceneRoute</code> (Lampe) auto|lan|cloud<br>
+        auto schickt Szenen vom Typ 0 und 2 per LAN und Typ 5 über die Cloud, wenn ein Schlüssel
+        gespeichert ist und die Cloud die Szene kennt. lan nimmt immer das LAN, cloud immer die
+        Cloud. Vorgabe auto.</li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
   <br>
@@ -1545,9 +1554,9 @@ set Lampe effect Sunrise</pre>
     <li>Eine Szene startet nicht, aber es kommt kein Fehler: Nicht jedes Modell kann jede Szene
         im LAN. Setze verbose 5 an der Bridge, um zu sehen, was gesendet wird.</li>
     <li>Eine per LAN gesendete Szene lässt die Lampe kurz ausgehen und die letzte DIY-Szene kommt
-        zurück: Das LAN-Szenenpaket ist nicht dokumentiert, und nicht jede Lampe nimmt es zuverlässig
-        an. Hinterlege einen API-Key, dann laufen Szenen über die Cloud. <code>sceneRoute</code>
-        muss dafür auf auto stehen.</li>
+        zurück: Das passiert bei Szenen vom Typ 5, deren LAN-Paket nicht entschlüsselt ist.
+        Hinterlege einen API-Key, dann laufen diese Szenen über die Cloud. Lehnt eine Lampe auch
+        andere Szenen im LAN ab, setze <code>sceneRoute</code> auf cloud.</li>
   </ul>
 </ul>
 

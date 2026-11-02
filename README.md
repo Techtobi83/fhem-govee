@@ -1,13 +1,12 @@
 # 98_GOVEE – Govee-Lampen direkt in FHEM
 
-FHEM-Modul für Govee-Lampen und LED-Streifen: Steuerung und Status **lokal im LAN**, Szenen über die
-Govee-Cloud. Ohne Home Assistant, ohne MQTT und ohne Bridge-Container. Die Auswahl in FHEM zeigt dieselben Szenen wie die Govee-App, passend zum
+FHEM-Modul für Govee-Lampen und LED-Streifen: Steuerung, Status und die meisten Szenen **lokal im LAN**. Ohne Home Assistant, ohne MQTT und ohne Bridge-Container. Die Auswahl in FHEM zeigt dieselben Szenen wie die Govee-App, passend zum
 jeweiligen Lampenmodell.
 
 ## Funktionen
 
 - Schalten, Helligkeit, Farbe und Farbtemperatur über die lokale LAN-Schnittstelle
-- **Alle App-Szenen** je Modell als Auswahlliste, mit API-Key über die Cloud gestartet, ohne Key per LAN
+- **Alle App-Szenen** je Modell als Auswahlliste, Szenen vom Typ 0 und 2 per LAN, Typ 5 mit API-Key über die Cloud
 - DIY-Szenen über die Govee-Cloud, gleiche Namen werden durchnummeriert
 - Status per LAN-Abfrage: Änderungen aus der App erscheinen nach spätestens `lanInterval` Sekunden
 - Cloud als Rückfall für Lampen, die im LAN nicht antworten
@@ -23,8 +22,9 @@ jeweiligen Lampenmodell.
 - Das Reading `effect` zeigt die zuletzt von FHEM gestartete Szene. Lampen melden die laufende
   Szene nicht.
 - Die Szenenbibliothek und die LAN-Szenenpakete sind nicht von Govee dokumentiert und können sich ändern.
-- LAN-Szenen nimmt nicht jede Lampe zuverlässig an: Ein H61D5 kehrte danach zur letzten DIY-Szene zurück.
-  Mit API-Key laufen Szenen deshalb über die Cloud. `attr <Lampe> sceneRoute lan` erzwingt das LAN.
+- Szenen vom Typ 5 sind im LAN noch nicht entschlüsselt. Ein H61D5 kehrte danach zur letzten DIY-Szene
+  zurück. Mit API-Key laufen sie deshalb über die Cloud, alle anderen Szenen per LAN.
+  `attr <Lampe> sceneRoute lan` oder `cloud` legt den Weg für alle Szenen fest.
 
 ## Voraussetzungen
 
@@ -32,7 +32,7 @@ jeweiligen Lampenmodell.
 - FHEM im selben Netz wie die Lampen. In Docker ist dafür Host-Netzwerk nötig.
 - UDP-Port 4002 auf dem FHEM-Rechner frei.
 - FHEM mit dem Perl-Modul `JSON` (Debian: `libjson-perl`).
-- Empfohlen ein **Govee-API-Key** für Szenen, DIY-Szenen und den Cloud-Rückfall:
+- Empfohlen ein **Govee-API-Key** für Szenen vom Typ 5, DIY-Szenen und den Cloud-Rückfall:
   Govee-Home-App, Profil, Einstellungen (Zahnrad), *Apply for API Key*.
 
 ## Installation
