@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id: 98_GOVEE.pm v1.0.6 2026-11-02 $
+# $Id: 98_GOVEE.pm v1.0.7 2026-11-03 $
 #
 # 98_GOVEE.pm - Govee-Lampen direkt in FHEM, LAN zuerst
 #
@@ -45,7 +45,7 @@ use IO::Socket::INET;
 use MIME::Base64;
 use Socket qw(inet_aton pack_sockaddr_in sockaddr_in inet_ntoa SO_BROADCAST);
 
-my $GOVEE_version = '1.0.6';
+my $GOVEE_version = '1.0.7';
 
 my $GOVEE_mcast    = '239.255.255.250';
 my $GOVEE_portScan = 4001;
@@ -69,13 +69,6 @@ our $GOVEE_cloudBase = 'https://openapi.api.govee.com/router/api/v1';
 my $GOVEE_keyName    = 'GOVEE_apiKey';
 my $GOVEE_selectKey  = 'GOVEE.udp';
 
-my %GOVEE_presets = (
-  RED   => 'FF0000',
-  GREEN => '00FF00',
-  BLUE  => '0000FF',
-  WHITE => 'FFFFFF',
-);
-
 sub GOVEE_Initialize {
   my ($hash) = @_;
   $hash->{DefFn}    = 'GOVEE_Define';
@@ -86,6 +79,9 @@ sub GOVEE_Initialize {
   $hash->{ReadFn}   = 'GOVEE_Read';
   $hash->{AttrList} = 'disable:0,1 lanInterval scanInterval scanTargets sendGap cloudInterval '
                     . 'lanIP sceneFilter sceneRoute:auto,lan,cloud ' . $readingFnAttributes;
+  # Nur die Zeitfunktionen: SetExtensions haengt sonst attrTemplate an, fuer GOVEE gibt es keine Vorlagen
+  $hash->{SetExtensionsFn} = ['DoSetExtensions'];
+  $hash->{seInitDone}      = 1;
   return;
 }
 
@@ -567,9 +563,6 @@ sub GOVEE_Set {
       if ($val !~ /^\d+$/ || $val < 100 || $val > 10000);
     return GOVEE_Ct($hash, $val < 1000 ? int(1000000 / $val + 0.5) : $val);
   }
-  if ($GOVEE_presets{$cmd}) {
-    return GOVEE_Rgb($hash, $GOVEE_presets{$cmd});
-  }
   if ($cmd eq 'effect' || $cmd eq 'effect_custom' || $cmd eq 'diy_scene') {
     my $val = join(' ', @args);
     $val =~ s/#/ /g;
@@ -687,8 +680,8 @@ sub GOVEE_Setlist {
 
   my $select = sub { return join(',', map { (my $n = $_) =~ s/,/ /g; $n =~ s/ +/#/g; $n } @_) };
   my $list = 'on:noArg off:noArg toggle:noArg brightness:slider,0,1,100 rgb:colorpicker,RGB '
-           . 'hsv:colorpicker,HSV ct:colorpicker,CT,153,1,370 RED:noArg GREEN:noArg BLUE:noArg '
-           . 'WHITE:noArg effect_custom:textField updateScenes:noArg statusRequest:noArg';
+           . 'hsv:colorpicker,HSV ct:colorpicker,CT,153,1,370 '
+           . 'effect_custom:textField updateScenes:noArg statusRequest:noArg';
   $list .= ' effect:select,' . $select->(@names, @diy) if (@names || @diy);
   $list .= ' effect:textField' if (!@names && !@diy);
   $list .= ' diy_scene:select,' . $select->(@diy) if (@diy);
@@ -851,6 +844,7 @@ sub GOVEE_Scene {
     GOVEE_Apply($hash, { on => 1, effect => $cloudName });
     return;
   }
+  return 'DIY-Szenen laufen ueber die Cloud, dafuer fehlt der API-Key' if ($diyOnly && !GOVEE_ApiKey());
   return "Szene '$want' gibt es fuer dieses Geraet nicht" . ($lib || $hash->{helper}{cloudScenes} ? '' : ' (Szenenliste noch nicht geladen)');
 }
 
@@ -1291,9 +1285,6 @@ set Lamp effect Sunrise</pre>
     <a id="GOVEE-set-ct"></a>
     <li><code>ct &lt;value&gt;</code><br>
         Sets the colour temperature, as mired (below 1000) or kelvin.</li>
-    <a id="GOVEE-set-RED"></a>
-    <li><code>RED, GREEN, BLUE, WHITE</code><br>
-        Fixed colours. Brightness stays as it is.</li>
     <a id="GOVEE-set-effect"></a>
     <li><code>effect &lt;scene&gt;</code><br>
         Starts a scene. The selection contains the scenes of this lamp model, followed by your
@@ -1381,6 +1372,23 @@ set Lamp effect Sunrise</pre>
     <li><code>discovered</code>: lamps found by the last search (model, id, address)</li>
     <li><code>apiKey</code>: gesetzt or fehlt</li>
     <li><code>cloudError</code>, <code>sceneError</code>: last error, or none</li>
+  </ul>
+  <br>
+
+  <a id="GOVEE-lightscene"></a>
+  <b>Saved states with LightScene</b>
+  <ul>
+    FHEM's <a href="#LightScene">LightScene</a> stores the state of a lamp under a name and restores it on
+    command. Automations then switch to a name instead of a fixed colour, and the colour or scene behind the
+    name can be changed without touching the automation. This attribute tells LightScene what to save: off,
+    or brightness with the running scene, colour temperature or colour.
+    <pre>
+define LampScenes LightScene Lamp
+attr Lamp lightSceneParamsToSave {ReadingsVal($DEVICE,"powerSwitch","OFF") ne "ON" ? "state" : ReadingsVal($DEVICE,"effect","") ne "" ? "brightness,effect" : ReadingsVal($DEVICE,"color_mode","") eq "color_temp" ? "brightness,color_temp -&gt; ct" : "brightness,rgb"}</pre>
+    Set the lamp as wanted and save it, for example <code>set LampScenes save Night</code>, then recall it
+    with <code>set LampScenes scene Night</code>. To return to the previous state later, save it first
+    under its own name, for example <code>save beforeMotion</code>. A scene started in the Govee app is not
+    known to FHEM, so it cannot be saved.
   </ul>
   <br>
 
@@ -1484,9 +1492,6 @@ set Lampe effect Sunrise</pre>
     <a id="GOVEE-set-ct"></a>
     <li><code>ct &lt;Wert&gt;</code><br>
         Setzt die Farbtemperatur, als Mired (unter 1000) oder Kelvin.</li>
-    <a id="GOVEE-set-RED"></a>
-    <li><code>RED, GREEN, BLUE, WHITE</code><br>
-        Feste Farben. Die Helligkeit bleibt, wie sie ist.</li>
     <a id="GOVEE-set-effect"></a>
     <li><code>effect &lt;Szene&gt;</code><br>
         Startet eine Szene. Die Auswahl enthält die Szenen dieses Lampenmodells, danach deine
@@ -1575,6 +1580,24 @@ set Lampe effect Sunrise</pre>
     <li><code>discovered</code>: bei der letzten Suche gefundene Lampen (Modell, ID, Adresse)</li>
     <li><code>apiKey</code>: gesetzt oder fehlt</li>
     <li><code>cloudError</code>, <code>sceneError</code>: letzter Fehler oder none</li>
+  </ul>
+  <br>
+
+  <a id="GOVEE-lightscene"></a>
+  <b>Gespeicherte Zustände mit LightScene</b>
+  <ul>
+    FHEMs <a href="#LightScene">LightScene</a> speichert den Zustand einer Lampe unter einem Namen und
+    stellt ihn per Befehl wieder her. Automatiken schalten dann auf einen Namen statt auf eine feste Farbe,
+    und die Farbe oder Szene dahinter lässt sich ändern, ohne die Automatik anzufassen. Dieses Attribut sagt
+    LightScene, was es speichern soll: aus, oder Helligkeit mit laufender Szene, Farbtemperatur oder Farbe.
+    <pre>
+define LampenSzenen LightScene Lampe
+attr Lampe lightSceneParamsToSave {ReadingsVal($DEVICE,"powerSwitch","OFF") ne "ON" ? "state" : ReadingsVal($DEVICE,"effect","") ne "" ? "brightness,effect" : ReadingsVal($DEVICE,"color_mode","") eq "color_temp" ? "brightness,color_temp -&gt; ct" : "brightness,rgb"}</pre>
+    Stelle die Lampe wie gewünscht ein und speichere sie, zum Beispiel mit
+    <code>set LampenSzenen save Nacht</code>, und rufe sie mit <code>set LampenSzenen scene Nacht</code> auf.
+    Um später zum vorherigen Zustand zurückzukehren, speichere ihn vorher unter einem eigenen Namen, zum
+    Beispiel <code>save vorBewegung</code>. Eine in der Govee-App gestartete Szene kennt FHEM nicht, sie
+    lässt sich also nicht speichern.
   </ul>
   <br>
 

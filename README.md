@@ -85,6 +85,18 @@ Das Reading `sceneList` enthält die wählbaren Szenen und füllt direkt eine Au
 Das Reading `sceneListCloud` nennt die Szenen daraus, die über die Cloud laufen, zum Beispiel für eine
 Markierung in der Auswahl. Mit dem Attribut `sceneFilter` kürzt du lange Listen, `^(?!Shape:)` blendet zum Beispiel die Kategorie Shape aus.
 
+## Gespeicherte Zustände mit LightScene
+
+FHEMs LightScene speichert den Zustand einer Lampe unter einem Namen. Automatiken schalten dann auf einen Namen
+statt auf eine feste Farbe, und was dahinter steckt, änderst du, ohne die Automatik anzufassen:
+
+```
+define LampenSzenen LightScene Lampe
+attr Lampe lightSceneParamsToSave {ReadingsVal($DEVICE,"powerSwitch","OFF") ne "ON" ? "state" : ReadingsVal($DEVICE,"effect","") ne "" ? "brightness,effect" : ReadingsVal($DEVICE,"color_mode","") eq "color_temp" ? "brightness,color_temp -> ct" : "brightness,rgb"}
+set LampenSzenen save Nacht
+set LampenSzenen scene Nacht
+```
+
 Alle Befehle, Attribute und Readings stehen in `help GOVEE`.
 
 ## Dank

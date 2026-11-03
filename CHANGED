@@ -1,3 +1,4 @@
+2026-11-03  v1.0.7  98_GOVEE: Set-Liste bereinigt (RED, GREEN, BLUE, WHITE und attrTemplate entfernt), klare Meldung bei diy_scene ohne API-Key, Hilfe zu LightScene
 2026-11-02  v1.0.6  98_GOVEE: Hilfe nennt bei effect das Reading sceneListCloud
 2026-11-02  v1.0.5  98_GOVEE: Reading sceneListCloud nennt die Szenen, die ueber die Cloud laufen
 2026-11-02  v1.0.4  98_GOVEE: Szenen vom Typ 0 und 2 per LAN, nur Typ 5 ueber die Cloud; sceneRoute cloud
